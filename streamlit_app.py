@@ -1,160 +1,196 @@
 import streamlit as st
 import pandas as pd
-from pybaseball import playerid_lookup, batting_stats
-import requests
+import numpy as np
+from pybaseball import batting_stats, pitching_stats
+import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="MLB Player Comparator", layout="wide")
+st.set_page_config(page_title="MLB Pro Comparator", layout="wide")
 
-# ---------------------------
-# Helpers
-# ---------------------------
-
-@st.cache_data
-def get_player_id(full_name):
-    try:
-        parts = full_name.strip().lower().split()
-
-        if len(parts) < 2:
-            return None, None
-
-        last = parts[-1]
-        first = parts[0]
-
-        df = playerid_lookup(last, first)
-
-        if df.empty:
-            return None, None
-
-        mlbam_id = df.iloc[0]["key_mlbam"]
-        full_name = f"{df.iloc[0]['name_first']} {df.iloc[0]['name_last']}"
-
-        return mlbam_id, full_name
-
-    except Exception:
-        return None, None
-
+# -----------------------------
+# Load player pools (cached)
+# -----------------------------
 
 @st.cache_data
-def get_stats(player_id, season):
-    try:
-        df = batting_stats(season)
-        player_row = df[df["IDfg"] == player_id]
-        if player_row.empty:
-            return None
-        return player_row.iloc[0]
-    except Exception:
-        return None
+def load_batters(season):
+    df = batting_stats(season)
+    df["label"] = df["Name"] + " (" + df["Team"].astype(str) + ")"
+    return df
+
+@st.cache_data
+def load_pitchers(season):
+    df = pitching_stats(season)
+    df["label"] = df["Name"] + " (" + df["Team"].astype(str) + ")"
+    return df
 
 
-def get_headshot(mlbam_id):
-    if not mlbam_id:
-        return None
-    return f"https://img.mlbstatic.com/mlb-photos/image/upload/w_150,h_150,c_fill,q_auto:best/v1/people/{mlbam_id}/headshot/67/current"
+def get_player_row(df, name_label):
+    return df[df["label"] == name_label].iloc[0]
 
 
-def safe(val):
-    return val if val is not None else "N/A"
+# -----------------------------
+# UI MODE
+# -----------------------------
+
+st.title("⚾ MLB Pro Player Comparator")
+
+mode = st.radio("Mode", ["Batters", "Pitchers"])
+
+season1 = st.selectbox("Player 1 Season", list(range(2015, 2026)), index=9)
+season2 = st.selectbox("Player 2 Season", list(range(2015, 2026)), index=9)
+
+# Load correct datasets
+if mode == "Batters":
+    df1 = load_batters(season1)
+    df2 = load_batters(season2)
+    stats = ["AVG", "HR", "R", "RBI", "SB", "OBP", "SLG", "OPS", "WAR"]
+else:
+    df1 = load_pitchers(season1)
+    df2 = load_pitchers(season2)
+    stats = ["ERA", "W", "SO", "WHIP", "IP", "WAR"]
 
 
-# ---------------------------
-# UI
-# ---------------------------
-
-st.title("⚾ MLB Player Comparator")
-
-st.markdown("Compare any two MLB players across any seasons.")
+# -----------------------------
+# Player selection (PRO UX)
+# -----------------------------
 
 col1, col2 = st.columns(2)
 
 with col1:
-    player1_name = st.text_input("Player 1 (First Last)")
-    season1 = st.selectbox("Player 1 Season", list(range(2015, 2026)), index=9)
+    p1 = st.selectbox("Player 1", df1["label"].sort_values().unique())
 
 with col2:
-    player2_name = st.text_input("Player 2 (First Last)")
-    season2 = st.selectbox("Player 2 Season", list(range(2015, 2026)), index=9)
+    p2 = st.selectbox("Player 2", df2["label"].sort_values().unique())
+
 
 run = st.button("Compare Players")
 
-# ---------------------------
-# Logic
-# ---------------------------
+
+# -----------------------------
+# Comparison logic
+# -----------------------------
+
+def colorize(v1, v2):
+    if v1 > v2:
+        return "🟢", "🔴"
+    elif v2 > v1:
+        return "🔴", "🟢"
+    else:
+        return "🟡", "🟡"
+
+
+def safe(val):
+    return 0 if pd.isna(val) else val
+
+
+# -----------------------------
+# MAIN OUTPUT
+# -----------------------------
 
 if run:
 
-    if not player1_name or not player2_name:
-        st.warning("Please enter both player names.")
-        st.stop()
+    p1_row = get_player_row(df1, p1)
+    p2_row = get_player_row(df2, p2)
 
-    p1_id, p1_clean = get_player_id(player1_name)
-    p2_id, p2_clean = get_player_id(player2_name)
+    st.divider()
 
-    if not p1_id or not p2_id:
-        st.error("Could not find one or both players. Check spelling.")
-        st.stop()
-
-    p1_stats = get_stats(p1_id, season1)
-    p2_stats = get_stats(p2_id, season2)
-
-    if p1_stats is None or p2_stats is None:
-        st.error("Stats not found for one or both players in selected seasons.")
-        st.stop()
-
-    # ---------------------------
-    # HEADSHOTS
-    # ---------------------------
+    # -------------------------
+    # HEADER SECTION
+    # -------------------------
 
     c1, c2 = st.columns(2)
 
     with c1:
-        st.subheader(f"{p1_clean} ({season1})")
-        st.image(get_headshot(p1_id), width=90)
+        st.subheader(f"{p1} ({season1})")
+        st.image(
+            f"https://img.mlbstatic.com/mlb-photos/image/upload/w_100,h_100,c_fill,q_auto/v1/people/{p1_row['IDfg']}/headshot/67/current",
+            width=80
+        )
 
     with c2:
-        st.subheader(f"{p2_clean} ({season2})")
-        st.image(get_headshot(p2_id), width=90)
+        st.subheader(f"{p2} ({season2})")
+        st.image(
+            f"https://img.mlbstatic.com/mlb-photos/image/upload/w_100,h_100,c_fill,q_auto/v1/people/{p2_row['IDfg']}/headshot/67/current",
+            width=80
+        )
 
-    # ---------------------------
-    # STAT COMPARISON
-    # ---------------------------
+    # -------------------------
+    # TABLE COMPARISON
+    # -------------------------
 
-    stats_to_show = [
-        "AVG",
-        "HR",
-        "R",
-        "RBI",
-        "SB",
-        "OBP",
-        "SLG",
-        "OPS",
-        "WAR"
-    ]
+    rows = []
 
-    comparison = pd.DataFrame({
-        "Stat": stats_to_show,
-        p1_clean: [safe(p1_stats.get(stat)) for stat in stats_to_show],
-        p2_clean: [safe(p2_stats.get(stat)) for stat in stats_to_show],
-    })
+    for stat in stats:
+        v1 = safe(p1_row.get(stat))
+        v2 = safe(p2_row.get(stat))
 
-    st.subheader("📊 Comparison")
-    st.dataframe(comparison, use_container_width=True)
+        icon1, icon2 = colorize(v1, v2)
 
-    # ---------------------------
-    # HIGHLIGHT WINNER STATS
-    # ---------------------------
+        rows.append([
+            stat,
+            f"{icon1} {v1}",
+            f"{icon2} {v2}"
+        ])
 
-    st.subheader("🏆 Advantage Summary")
+    comp_df = pd.DataFrame(rows, columns=["Stat", p1, p2])
 
-    for stat in stats_to_show:
-        v1 = p1_stats.get(stat)
-        v2 = p2_stats.get(stat)
+    st.subheader("📊 Stat Comparison")
+    st.dataframe(comp_df, use_container_width=True)
 
-        try:
-            if v1 > v2:
-                st.write(f"**{stat}:** {p1_clean} leads")
-            elif v2 > v1:
-                st.write(f"**{stat}:** {p2_clean} leads")
-            else:
-                st.write(f"**{stat}:** Tie")
-        except:
-            st.write(f"**{stat}:** N/A comparison")
+
+    # -------------------------
+    # WINNER SUMMARY
+    # -------------------------
+
+    st.subheader("🏆 Edge Summary")
+
+    p1_wins = 0
+    p2_wins = 0
+
+    for stat in stats:
+        v1 = safe(p1_row.get(stat))
+        v2 = safe(p2_row.get(stat))
+
+        if v1 > v2:
+            p1_wins += 1
+        elif v2 > v1:
+            p2_wins += 1
+
+    st.write(f"**{p1} Wins:** {p1_wins}")
+    st.write(f"**{p2} Wins:** {p2_wins}")
+
+    if p1_wins > p2_wins:
+        st.success(f"{p1} has the overall edge")
+    elif p2_wins > p1_wins:
+        st.success(f"{p2} has the overall edge")
+    else:
+        st.info("Even matchup")
+
+
+    # -------------------------
+    # RADAR CHART
+    # -------------------------
+
+    st.subheader("📈 Radar Comparison")
+
+    p1_vals = [safe(p1_row.get(s)) for s in stats]
+    p2_vals = [safe(p2_row.get(s)) for s in stats]
+
+    angles = np.linspace(0, 2*np.pi, len(stats), endpoint=False).tolist()
+    p1_vals += p1_vals[:1]
+    p2_vals += p2_vals[:1]
+    angles += angles[:1]
+
+    fig = plt.figure()
+    ax = plt.subplot(111, polar=True)
+
+    ax.plot(angles, p1_vals, label=p1)
+    ax.fill(angles, p1_vals, alpha=0.1)
+
+    ax.plot(angles, p2_vals, label=p2)
+    ax.fill(angles, p2_vals, alpha=0.1)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(stats)
+    ax.legend()
+
+    st.pyplot(fig)
