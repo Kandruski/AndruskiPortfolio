@@ -185,23 +185,59 @@ fields = [
 ]
 
 for key, label in fields:
-    a = safe(stats_a.get(key))
-    b = safe(stats_b.get(key))
+    a_val = stats_a.get(key)
+    b_val = stats_b.get(key)
 
-    colA, colM, colB = st.columns([1,0.2,1])
+    col1, col2, col3 = st.columns([1.2, 0.2, 1.2])
 
-    with colA:
-        st.markdown(f"**{label}:** {stats_a.get(key, '-')}")
-    with colM:
-        if not math.isnan(a) and not math.isnan(b):
-            if a > b:
-                st.markdown("🟢")
-            elif b > a:
-                st.markdown("🟢")
-            else:
-                st.markdown("⚪")
+    # convert safely for comparison
+    try:
+        a_num = float(a_val)
+    except:
+        a_num = None
+
+    try:
+        b_num = float(b_val)
+    except:
+        b_num = None
+
+    # determine winner
+    a_win = False
+    b_win = False
+
+    if a_num is not None and b_num is not None:
+        # LOWER is better for strikeouts
+        if key == "strikeOuts":
+            a_win = a_num < b_num
+            b_win = b_num < a_num
         else:
-            st.markdown("-")
+            a_win = a_num > b_num
+            b_win = b_num > a_num
 
-    with colB:
-        st.markdown(f"**{label}:** {stats_b.get(key, '-')}")
+    # LEFT (Player A)
+    with col1:
+        if a_win:
+            st.markdown(
+                f"<div style='background-color:#d1fadf;padding:8px;border-radius:8px'>"
+                f"**{label}:** {a_val}"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(f"**{label}:** {a_val}")
+
+    # MIDDLE label
+    with col2:
+        st.markdown("vs")
+
+    # RIGHT (Player B)
+    with col3:
+        if b_win:
+            st.markdown(
+                f"<div style='background-color:#d1fadf;padding:8px;border-radius:8px'>"
+                f"**{label}:** {b_val}"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(f"**{label}:** {b_val}")
