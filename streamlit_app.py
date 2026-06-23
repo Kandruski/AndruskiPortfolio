@@ -66,7 +66,7 @@ def get_stats(pid, season):
 # UI
 # -----------------------------
 st.set_page_config(layout="wide")
-st.title("⚾ MLB Player Comparator (Pro UI Upgrade)")
+st.title("⚾ MLB Player Comparator")
 
 
 players_df = get_all_players()
