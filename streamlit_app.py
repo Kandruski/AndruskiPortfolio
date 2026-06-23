@@ -1,6 +1,6 @@
 # streamlit_app.py
 # -------------------------------------------------------------
-# MLB Position Player Comparator (Improved UI Version)
+# MLB Position Player Comparator (Fixed Version)
 # -------------------------------------------------------------
 
 import math
@@ -12,30 +12,13 @@ MLB_API = "https://statsapi.mlb.com/api/v1"
 SPORT_ID = 1
 
 # ------------------------------
-# Page Config + Styling
+# Page Config
 # ------------------------------
 st.set_page_config(
     page_title="MLB Player Comparator",
     page_icon="⚾",
     layout="wide"
 )
-
-st.markdown("""
-<style>
-.block-container {
-    padding-top: 2rem;
-}
-
-h1, h2, h3 {
-    color: #ffffff;
-}
-
-div[data-testid="stSelectbox"] {
-    margin-bottom: 10px;
-}
-
-</style>
-""", unsafe_allow_html=True)
 
 # ------------------------------
 # Title
@@ -168,18 +151,25 @@ players_a = roster_a[roster_a["position"] == position]
 players_b = roster_b[roster_b["position"] == position]
 
 # ------------------------------
-# Player Selection
+# Player Selection (FIXED)
 # ------------------------------
 col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("## Team A")
+
     if players_a.empty:
         st.warning("No players found")
         st.stop()
 
     a_map = dict(zip(players_a["fullName"], players_a["personId"]))
-    player_a = st.selectbox("Player A", list(a_map.keys()))
+
+    player_a = st.selectbox(
+        "Player A",
+        list(a_map.keys()),
+        key="player_a_select"
+    )
+
     player_a_id = a_map[player_a]
 
     st.image(
@@ -191,12 +181,19 @@ with col1:
 
 with col2:
     st.markdown("## Team B")
+
     if players_b.empty:
         st.warning("No players found")
         st.stop()
 
     b_map = dict(zip(players_b["fullName"], players_b["personId"]))
-    player_b = st.selectbox("Player B", list(b_map.keys()))
+
+    player_b = st.selectbox(
+        "Player B",
+        list(b_map.keys()),
+        key="player_b_select"
+    )
+
     player_b_id = b_map[player_b]
 
     st.image(
