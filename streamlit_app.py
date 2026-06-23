@@ -1,169 +1,282 @@
-import streamlit as st
-import pandas as pd
+# streamlit_app.py
+# -------------------------------------------------------------
+# MLB Position Player Comparator (STABLE VERSION)
+# -------------------------------------------------------------
+
+import math
 import requests
+import pandas as pd
+import streamlit as st
 
-st.set_page_config(page_title="MLB Pro Comparator", layout="wide")
+MLB_API = "https://statsapi.mlb.com/api/v1"
+SPORT_ID = 1
 
-# -----------------------------
-# MLB API HELPERS (NO LIBRARIES)
-# -----------------------------
 
-def lookup_player(name):
+# ------------------------------
+# SAFE API CALL
+# ------------------------------
+def fetch_json(url, params=None):
     try:
-        url = f"https://statsapi.mlb.com/api/v1/people/search?names={name}"
-        r = requests.get(url).json()
-
-        people = r.get("people", [])
-        if not people:
-            return None, None
-
-        p = people[0]
-        return p["id"], p["fullName"]
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
     except:
-        return None, None
+        return {}
 
 
-def get_stats(player_id, season, group="hitting"):
+# ------------------------------
+# TEAMS
+# ------------------------------
+@st.cache_data(ttl=12 * 60 * 60)
+def get_teams():
+    data = fetch_json(
+        f"{MLB_API}/teams",
+        params={"sportId": SPORT_ID, "activeStatus": "Y"},
+    )
+
+    teams = []
+    for t in data.get("teams", []):
+        teams.append({
+            "id": t.get("id"),
+            "name": t.get("name"),
+            "abbrev": t.get("abbreviation"),
+        })
+
+    df = pd.DataFrame(teams)
+    if not df.empty:
+        df = df.sort_values("name").reset_index(drop=True)
+    return df
+
+
+# ------------------------------
+# ROSTER
+# ------------------------------
+@st.cache_data(ttl=6 * 60 * 60)
+def get_team_roster(team_id):
+    data = fetch_json(f"{MLB_API}/teams/{team_id}/roster", params={"rosterType": "active"})
+
+    roster = []
+    for r in data.get("roster", []):
+        p = r.get("person", {})
+        pos = r.get("position", {})
+
+        roster.append({
+            "personId": p.get("id"),
+            "fullName": p.get("fullName"),
+            "position": pos.get("abbreviation"),
+        })
+
+    return pd.DataFrame(roster)
+
+
+# ------------------------------
+# HEADSHOT
+# ------------------------------
+def get_headshot(person_id):
+    return f"https://img.mlbstatic.com/mlb-photos/image/upload/w_160,h_160,c_fill,q_auto/v1/people/{person_id}/headshot/67/current"
+
+
+# ------------------------------
+# STATS FETCH
+# ------------------------------
+@st.cache_data(ttl=60 * 60)
+def get_player_hitting_stats(person_id, season):
+    url = f"{MLB_API}/people/{person_id}/stats"
+    params = {"stats": "season", "group": "hitting", "season": season}
+
+    data = fetch_json(url, params=params)
+
+    stats_block = data.get("stats", [])
+    if not stats_block:
+        return {}
+
+    splits = stats_block[0].get("splits", [])
+    if not splits:
+        return {}
+
+    return splits[0].get("stat", {})
+
+
+# ------------------------------
+# UTIL
+# ------------------------------
+def safe(v):
     try:
-        url = f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats?stats=season&season={season}&group={group}"
-        r = requests.get(url).json()
-
-        stats = r.get("stats", [])
-        if not stats:
-            return None
-
-        splits = stats[0].get("splits", [])
-        if not splits:
-            return None
-
-        return splits[0]["stat"]
+        return float(v)
     except:
-        return None
+        return 0.0
 
 
-def headshot(player_id):
-    return f"https://img.mlbstatic.com/mlb-photos/image/upload/w_100,h_100,c_fill,q_auto/v1/people/{player_id}/headshot/67/current"
+STAT_FIELDS = [
+    ("avg", "AVG"),
+    ("obp", "OBP"),
+    ("slg", "SLG"),
+    ("ops", "OPS"),
+    ("homeRuns", "HR"),
+    ("rbi", "RBI"),
+    ("runs", "R"),
+    ("hits", "H"),
+    ("stolenBases", "SB"),
+    ("strikeOuts", "SO"),
+]
+
+LOW_IS_BETTER = {"strikeOuts"}
 
 
-def safe(val):
-    try:
-        return float(val)
-    except:
-        return 0
+POSITIONS = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"]
 
 
-# -----------------------------
-# UI
-# -----------------------------
+# ------------------------------
+# APP UI
+# ------------------------------
+st.set_page_config(page_title="MLB Comparator", layout="wide")
 
-st.title("⚾ MLB Pro Comparator (Stable Version)")
+st.title("⚾ MLB Position Player Comparator")
+st.caption("Stable version (MLB Stats API + Streamlit Cloud safe)")
 
+
+# ------------------------------
+# SIDEBAR
+# ------------------------------
+teams_df = get_teams()
+
+if teams_df.empty:
+    st.error("Failed to load teams.")
+    st.stop()
+
+team_map = dict(zip(teams_df["name"], teams_df["id"]))
+
+with st.sidebar:
+    st.header("Controls")
+
+    team_a = st.selectbox("Team A", teams_df["name"])
+    team_b = st.selectbox("Team B", teams_df["name"], index=1 if len(teams_df) > 1 else 0)
+
+    position = st.selectbox("Position", POSITIONS, index=4)
+
+    season = st.number_input("Season", min_value=2015, max_value=2026, value=2024)
+
+# ------------------------------
+# LOAD ROSTERS
+# ------------------------------
+team_a_id = team_map[team_a]
+team_b_id = team_map[team_b]
+
+roster_a = get_team_roster(team_a_id)
+roster_b = get_team_roster(team_b_id)
+
+players_a = roster_a[roster_a["position"] == position] if not roster_a.empty else pd.DataFrame()
+players_b = roster_b[roster_b["position"] == position] if not roster_b.empty else pd.DataFrame()
+
+
+# ------------------------------
+# PLAYER SELECT
+# ------------------------------
 col1, col2 = st.columns(2)
 
 with col1:
-    p1 = st.text_input("Player 1")
-    season1 = st.selectbox("Season 1", list(range(2015, 2026)), index=9)
+    st.subheader(f"{team_a} - {position}")
+
+    if players_a.empty:
+        st.warning("No players found")
+        p1_id = None
+        p1_name = None
+    else:
+        options = dict(zip(players_a["fullName"], players_a["personId"]))
+        p1_name = st.selectbox("Player A", list(options.keys()))
+        p1_id = options[p1_name]
+
+        st.image(get_headshot(p1_id), width=120)
+        st.write(p1_name)
 
 with col2:
-    p2 = st.text_input("Player 2")
-    season2 = st.selectbox("Season 2", list(range(2015, 2026)), index=9)
+    st.subheader(f"{team_b} - {position}")
 
-mode = st.radio("Mode", ["Batting", "Pitching"])
-
-run = st.button("Compare")
-
-# -----------------------------
-# MAIN LOGIC
-# -----------------------------
-
-if run:
-
-    if not p1 or not p2:
-        st.warning("Enter both players")
-        st.stop()
-
-    p1_id, p1_name = lookup_player(p1)
-    p2_id, p2_name = lookup_player(p2)
-
-    if not p1_id or not p2_id:
-        st.error("Player not found")
-        st.stop()
-
-    group = "hitting" if mode == "Batting" else "pitching"
-
-    p1_stats = get_stats(p1_id, season1, group)
-    p2_stats = get_stats(p2_id, season2, group)
-
-    if not p1_stats or not p2_stats:
-        st.error("Stats not available for selected season")
-        st.stop()
-
-    st.divider()
-
-    # -----------------------------
-    # HEADER
-    # -----------------------------
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.subheader(f"{p1_name} ({season1})")
-        st.image(headshot(p1_id), width=80)
-
-    with c2:
-        st.subheader(f"{p2_name} ({season2})")
-        st.image(headshot(p2_id), width=80)
-
-    # -----------------------------
-    # STATS
-    # -----------------------------
-
-    if mode == "Batting":
-        stats_list = ["avg", "homeRuns", "runs", "rbi", "stolenBases", "obp", "slg", "ops"]
+    if players_b.empty:
+        st.warning("No players found")
+        p2_id = None
+        p2_name = None
     else:
-        stats_list = ["era", "wins", "strikeOuts", "whip", "inningsPitched"]
+        options = dict(zip(players_b["fullName"], players_b["personId"]))
+        p2_name = st.selectbox("Player B", list(options.keys()))
+        p2_id = options[p2_name]
+
+        st.image(get_headshot(p2_id), width=120)
+        st.write(p2_name)
+
+
+st.divider()
+
+
+# ------------------------------
+# STOP IF INVALID
+# ------------------------------
+if not players_a.empty and not players_b.empty:
+
+    stats_a = get_player_hitting_stats(p1_id, season)
+    stats_b = get_player_hitting_stats(p2_id, season)
+
+    if not stats_a or not stats_b:
+        st.error("No stats available for this season.")
+        st.stop()
 
     rows = []
 
-    for s in stats_list:
-        v1 = safe(p1_stats.get(s, 0))
-        v2 = safe(p2_stats.get(s, 0))
+    for key, label in STAT_FIELDS:
+        a = safe(stats_a.get(key))
+        b = safe(stats_b.get(key))
 
-        if v1 > v2:
-            r1, r2 = "🟢", "🔴"
-        elif v2 > v1:
-            r1, r2 = "🔴", "🟢"
+        if key in LOW_IS_BETTER:
+            if a < b:
+                ha, hb = "🟢", "🔴"
+            elif b < a:
+                ha, hb = "🔴", "🟢"
+            else:
+                ha = hb = "🟡"
         else:
-            r1, r2 = "🟡", "🟡"
+            if a > b:
+                ha, hb = "🟢", "🔴"
+            elif b > a:
+                ha, hb = "🔴", "🟢"
+            else:
+                ha = hb = "🟡"
 
-        rows.append([s, f"{r1} {v1}", f"{r2} {v2}"])
+        rows.append([label, f"{ha} {a}", f"{hb} {b}"])
 
     df = pd.DataFrame(rows, columns=["Stat", p1_name, p2_name])
 
     st.subheader("📊 Comparison")
     st.dataframe(df, use_container_width=True)
 
-    # -----------------------------
-    # WIN SUMMARY
-    # -----------------------------
-
+    # --------------------------
+    # SUMMARY
+    # --------------------------
     p1_wins = 0
     p2_wins = 0
 
-    for s in stats_list:
-        v1 = safe(p1_stats.get(s, 0))
-        v2 = safe(p2_stats.get(s, 0))
+    for key, _ in STAT_FIELDS:
+        a = safe(stats_a.get(key))
+        b = safe(stats_b.get(key))
 
-        if v1 > v2:
-            p1_wins += 1
-        elif v2 > v1:
-            p2_wins += 1
+        if key in LOW_IS_BETTER:
+            if a < b:
+                p1_wins += 1
+            elif b < a:
+                p2_wins += 1
+        else:
+            if a > b:
+                p1_wins += 1
+            elif b > a:
+                p2_wins += 1
 
     st.subheader("🏆 Edge")
 
+    st.write(f"{p1_name}: {p1_wins}")
+    st.write(f"{p2_name}: {p2_wins}")
+
     if p1_wins > p2_wins:
-        st.success(f"{p1_name} leads ({p1_wins}–{p2_wins})")
+        st.success(f"{p1_name} leads overall")
     elif p2_wins > p1_wins:
-        st.success(f"{p2_name} leads ({p2_wins}–{p1_wins})")
+        st.success(f"{p2_name} leads overall")
     else:
         st.info("Even matchup")
