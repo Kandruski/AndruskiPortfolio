@@ -155,7 +155,14 @@ for k, label in fields:
     rows.append([label, a_show, b_show])
 
 
-df = pd.DataFrame(rows, columns=["Stat", p1_name, p2_name])
+col_a = f"{p1_name} (A)"
+col_b = f"{p2_name} (B)"
+
+# fallback safety if names collide or are empty
+if col_a == col_b:
+    col_b = col_b + " 2"
+
+df = pd.DataFrame(rows, columns=["Stat", col_a, col_b])
 
 st.subheader("📊 Comparison")
 st.dataframe(df, use_container_width=True)
